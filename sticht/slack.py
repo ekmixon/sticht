@@ -90,10 +90,7 @@ def is_relevant_event(event):
     The event stream might contain mixed Slack API data (Events and Blocks)
     see more https://api.slack.com/events-api
     """
-    if event and 'type' in event:
-        if event['type'] == 'block_actions':
-            return True
-    return False
+    return bool(event and 'type' in event and event['type'] == 'block_actions')
 
 
 async def get_slack_events():
@@ -276,31 +273,35 @@ class SlackDeploymentProcess(DeploymentProcess, abc.ABC):
         }
 
     def get_available_buttons(self) -> List[str]:
-        buttons = []
-
         if self.is_terminal_state(self.state):
             # If we're about to exit, always clear the buttons, since once we exit the buttons will stop working.
             return []
 
-        for trigger in self.machine.get_triggers(self.state):
-            suffix = '_button_clicked'
-            if trigger.endswith(suffix):
-                if all(
-                    cond.target ==
-                    self.machine.resolve_callable(
-                        cond.func,
-                        transitions.EventData(
-                            self.state, self, self.machine, self, args=(), kwargs={},
-                        ),
-                    )()
-                    for transition in self.machine.get_transitions(
-                        source=self.state, trigger=trigger,
-                    )
-                    for cond in transition.conditions
-                ):
-                    buttons.append(trigger[: -len(suffix)])
-
-        return buttons
+        suffix = '_button_clicked'
+        return [
+            trigger[: -len(suffix)]
+            for trigger in self.machine.get_triggers(self.state)
+            if trigger.endswith(suffix)
+            and all(
+                cond.target
+                == self.machine.resolve_callable(
+                    cond.func,
+                    transitions.EventData(
+                        self.state,
+                        self,
+                        self.machine,
+                        self,
+                        args=(),
+                        kwargs={},
+                    ),
+                )()
+                for transition in self.machine.get_transitions(
+                    source=self.state,
+                    trigger=trigger,
+                )
+                for cond in transition.conditions
+            )
+        ]
 
     def slack_api_call(self, *args, **kwargs):
         """Makes an api call to Slack via a client, if it exists. Non-Slack errors
@@ -308,14 +309,12 @@ class SlackDeploymentProcess(DeploymentProcess, abc.ABC):
         """
         if self.slack_client is None:
             return {'ok': False, 'error': 'Slack client does not exist'}
-        else:
-            try:
-                resp = self.slack_client.api_call(*args, **kwargs)
-                return resp
-            except Exception as e:
-                # leaving error/warning logging to callers, only debug log here.
-                log.debug(f'Exception encountered when making Slack api call: {e}')
-                return {'ok': False, 'error': f'{type(e).__name__}: {e}'}
+        try:
+            return self.slack_client.api_call(*args, **kwargs)
+        except Exception as e:
+            # leaving error/warning logging to callers, only debug log here.
+            log.debug(f'Exception encountered when making Slack api call: {e}')
+            return {'ok': False, 'error': f'{type(e).__name__}: {e}'}
 
     def update_slack_thread(self, message, color=None):
         message = message[:3000]
@@ -366,12 +365,10 @@ class SlackDeploymentProcess(DeploymentProcess, abc.ABC):
                 )
                 self.slack_channel = self.default_slack_channel
                 self.send_initial_slack_message()
-                return
             else:
                 log_error('Continuing without Slack')
                 self.slack_client = None
-                return
-
+            return
         if resp['ok'] is not True:
             log_error(f"Posting to slack failed: {resp['error']}")
 

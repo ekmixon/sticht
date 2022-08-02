@@ -239,8 +239,7 @@ class SLOSlackDeploymentProcess(SlackDeploymentProcess, abc.ABC):
 
     def get_extra_blocks_for_deployment(self):
         blocks = []
-        slo_text = self.get_slo_text(summary=False)
-        if slo_text:
+        if slo_text := self.get_slo_text(summary=False):
             blocks.append(
                 {'type': 'section', 'text': {'type': 'mrkdwn', 'text': slo_text}},
             )
@@ -248,89 +247,84 @@ class SLOSlackDeploymentProcess(SlackDeploymentProcess, abc.ABC):
 
     def get_extra_summary_parts_for_deployment(self) -> List[str]:
         parts = super().get_extra_summary_parts_for_deployment()
-        slo_text = self.get_slo_text(summary=True)
-        if slo_text:
+        if slo_text := self.get_slo_text(summary=True):
             parts.append(slo_text)
 
         return parts
 
     def get_slo_text(self, summary: bool) -> str:
         slo_watchers = getattr(self, 'slo_watchers', None)
-        if slo_watchers is not None and len(slo_watchers) > 0:
-            failing = [w for w in slo_watchers if w.failing]
-
-            # Wrap emojis in this subclass so we can select only the emojis or only the detail sections.
-            class Emoji(str):
-                pass
-
-            if len(failing) > 0:
-                slo_text_components = [
-                    Emoji(':alert:'),
-                    f'{len(failing)} of {len(slo_watchers)} SLOs are failing:\n',
-                ]
-                for slo_watcher in failing:
-                    slo_text_components.append(f'{slo_watcher.label}\n')
-            else:
-
-                unknown = [
-                    w
-                    for w in slo_watchers
-                    if w.bad_before_mark is None or w.bad_after_mark is None
-                ]
-                bad_before_mark = [w for w in slo_watchers if w.bad_before_mark]
-                slo_text_components = []
-                if len(unknown) > 0:
-                    slo_text_components.extend(
-                        [
-                            Emoji(':thinking_face:'),
-                            f'{len(unknown)} SLOs are missing data:\n',
-                        ],
-                    )
-                    for slo_watcher in unknown:
-                        slo_text_components.append(f'{slo_watcher.label}\n')
-
-                if len(bad_before_mark) > 0:
-                    slo_text_components.extend(
-                        [
-                            Emoji(':grimacing:'),
-                            f'{len(bad_before_mark)} SLOs were failing before deploy, and will be ignored:\n',
-                        ],
-                    )
-                    for slo_watcher in bad_before_mark:
-                        slo_text_components.append(f'{slo_watcher.label}\n')
-
-                remaining = len(slo_watchers) - len(unknown) - len(bad_before_mark)
-
-                if remaining == len(slo_watchers):
-                    slo_text_components = [
-                        Emoji(':ok_hand:'),
-                        f'All {len(slo_watchers)} SLOs are currently passing.',
-                    ]
-                else:
-                    if remaining > 0:
-                        slo_text_components.append(
-                            f'The remaining {remaining} SLOs are currently passing.',
-                        )
-
-            if summary:
-                # For summary, only display emojis.
-                if self.is_terminal_state(self.state):
-                    return ''
-                else:
-                    return ' '.join(
-                        [c for c in slo_text_components if isinstance(c, Emoji)],
-                    )
-            else:
-                # Display all text for non-summary mode, but hide Emojis if we're in a terminal state, to prevent
-                # things like :alert: from blinking until the end of time.
-                if self.is_terminal_state(self.state):
-                    return ' '.join(
-                        [c for c in slo_text_components if not isinstance(c, Emoji)],
-                    )
-                else:
-                    return ' '.join(slo_text_components)
-        else:
+        if slo_watchers is None or len(slo_watchers) <= 0:
             return ''
+        failing = [w for w in slo_watchers if w.failing]
+
+        class Emoji(str):
+            pass
+
+        if failing:
+            slo_text_components = [
+                Emoji(':alert:'),
+                f'{len(failing)} of {len(slo_watchers)} SLOs are failing:\n',
+            ]
+            slo_text_components.extend(f'{slo_watcher.label}\n' for slo_watcher in failing)
+        else:
+
+            unknown = [
+                w
+                for w in slo_watchers
+                if w.bad_before_mark is None or w.bad_after_mark is None
+            ]
+            bad_before_mark = [w for w in slo_watchers if w.bad_before_mark]
+            slo_text_components = []
+            if unknown:
+                slo_text_components.extend(
+                    [
+                        Emoji(':thinking_face:'),
+                        f'{len(unknown)} SLOs are missing data:\n',
+                    ],
+                )
+                slo_text_components.extend(f'{slo_watcher.label}\n' for slo_watcher in unknown)
+            if bad_before_mark:
+                slo_text_components.extend(
+                    [
+                        Emoji(':grimacing:'),
+                        f'{len(bad_before_mark)} SLOs were failing before deploy, and will be ignored:\n',
+                    ],
+                )
+                slo_text_components.extend(
+                    f'{slo_watcher.label}\n' for slo_watcher in bad_before_mark
+                )
+
+            remaining = len(slo_watchers) - len(unknown) - len(bad_before_mark)
+
+            if remaining == len(slo_watchers):
+                slo_text_components = [
+                    Emoji(':ok_hand:'),
+                    f'All {len(slo_watchers)} SLOs are currently passing.',
+                ]
+            elif remaining > 0:
+                slo_text_components.append(
+                    f'The remaining {remaining} SLOs are currently passing.',
+                )
+
+        if summary:
+                # For summary, only display emojis.
+            return (
+                ''
+                if self.is_terminal_state(self.state)
+                else ' '.join(
+                    [c for c in slo_text_components if isinstance(c, Emoji)],
+                )
+            )
+
+        # Display all text for non-summary mode, but hide Emojis if we're in a terminal state, to prevent
+        # things like :alert: from blinking until the end of time.
+        if self.is_terminal_state(self.state):
+            return ' '.join(
+                [c for c in slo_text_components if not isinstance(c, Emoji)],
+            )
+        else:
+            return ' '.join(slo_text_components)
 
     def start_slo_watcher_threads(self, service: str, soa_dir: str) -> None:
         _, self.slo_watchers = watch_slos_for_service(
